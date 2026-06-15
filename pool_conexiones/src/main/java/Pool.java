@@ -50,10 +50,13 @@ public class Pool {
         }
         // Si la conexión está cerrada, la reemplazamos
         if (conn.isClosed()) {
-            conn = new RealConnection(conn.getId(), provider);
-            // Reemplazar en la lista allConnections (opcional, pero recomendado)
-            int index = allConnections.indexOf(conn);
-            if (index >= 0) allConnections.set(index, conn);
+            // Guardar referencia original para localizar su índice en allConnections
+            RealConnection oldConn = conn;
+            RealConnection newConn = new RealConnection(oldConn.getId(), provider);
+            // Reemplazar en la lista allConnections (si existe)
+            int index = allConnections.indexOf(oldConn);
+            if (index >= 0) allConnections.set(index, newConn);
+            conn = newConn;
         }
         conn.connect();
         activeCount.incrementAndGet();

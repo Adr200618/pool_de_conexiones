@@ -10,59 +10,67 @@ import java.util.concurrent.*;
  */
 public class ConnectionSimulatorMultiDB {
     // Configuración de la prueba
-    private static final int NUM_QUERIES = 50;
-    private static final int NUM_THREADS = 10;
-    private static final int POOL_INITIAL_SIZE = 5;
-    private static final int POOL_MAX_SIZE = 10;
+    private static final int NUM_QUERIES = 10000;
+    private static final int NUM_THREADS = 10000;
+    private static final int NO_POOL_THREADS = 20; // Limita hilos sin pool para reducir la carga de creación de conexiones
+    private static final int MAX_THREAD_COUNT = 200; // Evita crear demasiados hilos cuando se usa pool
+    private static final int POOL_INITIAL_SIZE = 10;
+    private static final int POOL_MAX_SIZE = 30;
     
     // Configuración PostgreSQL (Windows)
     // Cambia estos valores según tu instalación
-    private static final String PG_URL = "jdbc:postgresql://localhost:5432/testdb";
+    // Desactivar SSL si el servidor no lo soporta y añadir timeouts para evitar bloqueos
+    private static final String PG_URL = "jdbc:postgresql://localhost:5432/testdb?sslmode=disable&connectTimeout=10&socketTimeout=30";
     private static final String PG_USER = "postgres";
     private static final String PG_PASSWORD = "32082324"; // Cambia por tu contraseña real de PostgreSQL
     
     // Configuración MySQL (Windows)
     // Cambia estos valores según tu instalación
-    private static final String MYSQL_URL = "jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+    private static final String MYSQL_URL = "jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&connectTimeout=10&socketTimeout=30";
     private static final String MYSQL_USER = "root";
     private static final String MYSQL_PASSWORD = "32082324"; // Cambia por tu contraseña real de MySQL
     
     // Almacenar resultados para comparativa final
     private static long pgTimeWithoutPool = 0;
     private static long pgTimeWithPool = 0;
+    private static int pgCompletedWithoutPool = 0;
+    private static int pgFailedWithoutPool = 0;
+    private static int pgCompletedWithPool = 0;
+    private static int pgFailedWithPool = 0;
+
     private static long mysqlTimeWithoutPool = 0;
     private static long mysqlTimeWithPool = 0;
+    private static int mysqlCompletedWithoutPool = 0;
+    private static int mysqlFailedWithoutPool = 0;
+    private static int mysqlCompletedWithPool = 0;
+    private static int mysqlFailedWithPool = 0;
     
     public static void main(String[] args) {
-        System.out.println("╔════════════════════════════════════════════════════════════════╗");
-        System.out.println("║     SIMULADOR DE CONEXIONES CON MÚLTIPLES BASES DE DATOS      ║");
-        System.out.println("║              PostgreSQL vs MySQL - WINDOWS                    ║");
-        System.out.println("╚════════════════════════════════════════════════════════════════╝\n");
         
         // Probar con PostgreSQL
-        System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        System.out.println("📊 POSTGRESQL");
-        System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        System.out.println("===========================================================");
+        System.out.println(" POSTGRESQL");
+        System.out.println("===========================================================");
         
         try {
             PostgreSQLProvider pgProvider = new PostgreSQLProvider(PG_URL, PG_USER, PG_PASSWORD);
             testDatabase(pgProvider);
         } catch (Exception e) {
-            System.err.println("❌ Error con PostgreSQL: " + e.getMessage());
+            System.err.println(" Error con PostgreSQL: " + e.getMessage());
             System.err.println("   Asegúrate de que PostgreSQL esté corriendo y la BD 'testdb' exista");
             System.err.println("   En Windows: Services -> PostgreSQL -> Iniciar");
         }
         
         // Probar con MySQL
-        System.out.println("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        System.out.println("📊 MYSQL");
-        System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        System.out.println("\n\n===========================================================");
+        System.out.println(" MYSQL");
+        System.out.println("===========================================================");
         
         try {
             MySQLProvider mysqlProvider = new MySQLProvider(MYSQL_URL, MYSQL_USER, MYSQL_PASSWORD);
             testDatabase(mysqlProvider);
         } catch (Exception e) {
-            System.err.println("❌ Error con MySQL: " + e.getMessage());
+            System.err.println(" Error con MySQL: " + e.getMessage());
             System.err.println("   Asegúrate de que MySQL esté corriendo y la BD 'testdb' exista");
             System.err.println("   En Windows: Services -> MySQL -> Iniciar");
         }
@@ -81,34 +89,44 @@ public class ConnectionSimulatorMultiDB {
             insertTestData(provider);
             
             // Prueba sin pool
-            System.out.println("\n📍 MODO SIN POOL");
-            long timeWithoutPool = runTest(provider, false);
+            System.out.println("\n MODO SIN POOL");
+            TestResult resultWithoutPool = runTest(provider, false);
             
             // Prueba con pool
-            System.out.println("\n📍 MODO CON POOL");
-            long timeWithPool = runTest(provider, true);
+            System.out.println("\n MODO CON POOL");
+            TestResult resultWithPool = runTest(provider, true);
             
             // Guardar resultados para comparativa
             if (provider.getName().equals("PostgreSQL")) {
-                pgTimeWithoutPool = timeWithoutPool;
-                pgTimeWithPool = timeWithPool;
+                pgTimeWithoutPool = resultWithoutPool.timeMs;
+                pgTimeWithPool = resultWithPool.timeMs;
+                pgCompletedWithoutPool = resultWithoutPool.completed;
+                pgFailedWithoutPool = resultWithoutPool.failed;
+                pgCompletedWithPool = resultWithPool.completed;
+                pgFailedWithPool = resultWithPool.failed;
             } else if (provider.getName().equals("MySQL")) {
-                mysqlTimeWithoutPool = timeWithoutPool;
-                mysqlTimeWithPool = timeWithPool;
+                mysqlTimeWithoutPool = resultWithoutPool.timeMs;
+                mysqlTimeWithPool = resultWithPool.timeMs;
+                mysqlCompletedWithoutPool = resultWithoutPool.completed;
+                mysqlFailedWithoutPool = resultWithoutPool.failed;
+                mysqlCompletedWithPool = resultWithPool.completed;
+                mysqlFailedWithPool = resultWithPool.failed;
             }
             
             // Mostrar resultados para esta BD
-            System.out.println("\n📈 RESULTADOS PARA " + provider.getName());
-            System.out.printf("  Sin Pool: %d ms%n", timeWithoutPool);
-            System.out.printf("  Con Pool: %d ms%n", timeWithPool);
+            System.out.println("\nRESULTADOS PARA " + provider.getName());
+            System.out.printf("  Sin Pool: %d ms | Completadas: %d | Fallidas: %d%n", 
+                    resultWithoutPool.timeMs, resultWithoutPool.completed, resultWithoutPool.failed);
+            System.out.printf("  Con Pool: %d ms | Completadas: %d | Fallidas: %d%n", 
+                    resultWithPool.timeMs, resultWithPool.completed, resultWithPool.failed);
             
-            if (timeWithoutPool > 0) {
-                double improvement = (timeWithoutPool - timeWithPool) * 100.0 / timeWithoutPool;
+            if (resultWithoutPool.timeMs > 0) {
+                double improvement = (resultWithoutPool.timeMs - resultWithPool.timeMs) * 100.0 / resultWithoutPool.timeMs;
                 System.out.printf("  Mejora: %.1f%% más rápido con pool%n", improvement);
             }
             
         } catch (Exception e) {
-            System.err.println("❌ Error probando " + provider.getName() + ": " + e.getMessage());
+            System.err.println("Error probando " + provider.getName() + ": " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -117,9 +135,10 @@ public class ConnectionSimulatorMultiDB {
      * Crea la tabla si no existe
      */
     private static void setupDatabase(DatabaseProvider provider) throws SQLException {
-        try (Connection conn = provider.createConnection()) {
-            conn.createStatement().execute(provider.getCreateTableSQL());
-            System.out.println("✅ Tabla 'usuarios' verificada/creada en " + provider.getName());
+        try (Connection conn = provider.createConnection();
+             var stmt = conn.createStatement()) {
+            stmt.execute(provider.getCreateTableSQL());
+            System.out.println(" Tabla 'usuarios' verificada/creada en " + provider.getName());
         }
     }
     
@@ -127,33 +146,35 @@ public class ConnectionSimulatorMultiDB {
      * Inserta datos de prueba
      */
     private static void insertTestData(DatabaseProvider provider) throws SQLException {
-        try (Connection conn = provider.createConnection()) {
+        try (Connection conn = provider.createConnection();
+             var countStmt = conn.createStatement()) {
             // Verificar cuántos registros hay
-            ResultSet rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM usuarios");
-            rs.next();
-            int count = rs.getInt(1);
-            
-            if (count < NUM_QUERIES) {
-                System.out.println("📝 Insertando " + NUM_QUERIES + " registros de prueba en " + provider.getName() + "...");
-                
-                // Usar batch para mejor rendimiento
-                conn.setAutoCommit(false);
-                try (Statement stmt = conn.createStatement()) {
-                    for (int i = 1; i <= NUM_QUERIES; i++) {
-                        String insertSQL = provider.getInsertSQL(i, "Usuario" + i, "usuario" + i + "@test.com");
-                        stmt.addBatch(insertSQL);
-                        
-                        // Ejecutar cada 1000 registros
-                        if (i % 1000 == 0) {
-                            stmt.executeBatch();
+            try (ResultSet rs = countStmt.executeQuery("SELECT COUNT(*) FROM usuarios")) {
+                rs.next();
+                int count = rs.getInt(1);
+
+                if (count < NUM_QUERIES) {
+                    System.out.println(" Insertando " + NUM_QUERIES + " registros de prueba en " + provider.getName() + "...");
+
+                    // Usar batch para mejor rendimiento
+                    conn.setAutoCommit(false);
+                    try (var stmt = conn.createStatement()) {
+                        for (int i = 1; i <= NUM_QUERIES; i++) {
+                            String insertSQL = provider.getInsertSQL(i, "Usuario" + i, "usuario" + i + "@test.com");
+                            stmt.addBatch(insertSQL);
+
+                            // Ejecutar cada 1000 registros
+                            if (i % 1000 == 0) {
+                                stmt.executeBatch();
+                            }
                         }
+                        stmt.executeBatch();
+                        conn.commit();
                     }
-                    stmt.executeBatch();
-                    conn.commit();
+                    System.out.println(" Datos insertados en " + provider.getName());
+                } else {
+                    System.out.println(" Datos ya existentes en " + provider.getName());
                 }
-                System.out.println("✅ Datos insertados en " + provider.getName());
-            } else {
-                System.out.println("✅ Datos ya existentes en " + provider.getName());
             }
         }
     }
@@ -161,7 +182,7 @@ public class ConnectionSimulatorMultiDB {
     /**
      * Ejecuta las pruebas con o sin pool
      */
-    private static long runTest(DatabaseProvider provider, boolean usePool) 
+    private static TestResult runTest(DatabaseProvider provider, boolean usePool) 
             throws InterruptedException, SQLException {
         
         QueryRunner.resetCounters();
@@ -172,7 +193,9 @@ public class ConnectionSimulatorMultiDB {
             System.out.println("  Pool creado: " + POOL_INITIAL_SIZE + " conexiones iniciales");
         }
         
-        ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS);
+        int threadCount = usePool ? Math.min(NUM_THREADS, MAX_THREAD_COUNT) : NO_POOL_THREADS;
+        System.out.println("  Ejecutando con " + threadCount + " hilos " + (usePool ? "(con pool)" : "(sin pool)"));
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         List<Future<String>> futures = new ArrayList<>();
         long testStartTime = System.nanoTime();
         
@@ -190,26 +213,47 @@ public class ConnectionSimulatorMultiDB {
             try {
                 System.out.print(future.get());
             } catch (ExecutionException e) {
-                System.err.println("Error en la ejecución de una query: " + e.getCause().getMessage());
+                // Si la tarea lanzó una excepción, contabilizarla como fallo
+                QueryRunner.incrementFailedCount();
+                System.err.println("Error en la ejecucion de una query: " + e.getCause().getMessage());
             }
         }
 
         boolean finished = executor.awaitTermination(60, TimeUnit.SECONDS);
-        
+
         long totalTime = (System.nanoTime() - testStartTime) / 1_000_000;
-        
+
         if (!finished) {
-            System.err.println("⚠️ Timeout en " + provider.getName());
+            System.err.println(" Timeout en " + provider.getName());
             executor.shutdownNow();
         }
-        
-        // Mostrar estadísticas
-        System.out.printf("  Queries completadas: %d/%d%n", 
-                QueryRunner.getCompletedCount(), NUM_QUERIES);
-        System.out.printf("  Queries fallidas: %d%n", QueryRunner.getFailedCount());
+
+        // Mostrar estadísticas: incluir fracción total de queries finalizadas y luego separarlas
+        int completed = QueryRunner.getCompletedCount();
+        int failed = QueryRunner.getFailedCount();
+        int finishedCount = completed + failed;
+
+        System.out.printf("  Queries finalizadas: %d/%d%n", finishedCount, NUM_QUERIES);
+        System.out.printf("  Queries completadas: %d/%d%n", completed, NUM_QUERIES);
+        System.out.printf("  Queries fallidas: %d/%d%n", failed, NUM_QUERIES);
         System.out.printf("  Tiempo total: %d ms%n", totalTime);
         
-        return totalTime;
+        return new TestResult(totalTime, completed, failed);
+    }
+
+    /**
+     * Resultados de una ejecución de prueba
+     */
+    private static class TestResult {
+        private final long timeMs;
+        private final int completed;
+        private final int failed;
+
+        private TestResult(long timeMs, int completed, int failed) {
+            this.timeMs = timeMs;
+            this.completed = completed;
+            this.failed = failed;
+        }
     }
     
     /**
@@ -249,16 +293,21 @@ public class ConnectionSimulatorMultiDB {
             System.out.println("\n📊 Comparativa usando POOL de conexiones:");
             if (pgTimeWithPool < mysqlTimeWithPool) {
                 double faster = (mysqlTimeWithPool - pgTimeWithPool) * 100.0 / mysqlTimeWithPool;
-                System.out.printf("  ✅ PostgreSQL es %.1f%% más RÁPIDO que MySQL con pool%n", faster);
+                System.out.printf("   PostgreSQL es %.1f%% mas rapido que MySQL con pool%n", faster);
             } else if (mysqlTimeWithPool < pgTimeWithPool) {
                 double faster = (pgTimeWithPool - mysqlTimeWithPool) * 100.0 / pgTimeWithPool;
-                System.out.printf("  ✅ MySQL es %.1f%% más RÁPIDO que PostgreSQL con pool%n", faster);
+                System.out.printf("   MySQL es %.1f%% mas rapido que PostgreSQL con pool%n", faster);
             } else {
-                System.out.println("  ⚖️ Ambas bases de datos tienen rendimiento similar");
+                System.out.println("  Ambas bases de datos tienen rendimiento similar");
             }
         }
-        
-        System.out.println("\n💡 Conclusión: El pool de conexiones mejora significativamente el rendimiento");
-        System.out.println("   al reutilizar conexiones en lugar de crearlas para cada consulta.");
+
+        System.out.println("\n╔══════════════════════════════════════════════════════════════╗");
+        System.out.println("║          RESUMEN FINAL DE QUERIES COMPLETADAS / FALLIDAS      ║");
+        System.out.println("╚══════════════════════════════════════════════════════════════╝");
+        System.out.printf(" PostgreSQL Sin Pool:   %d completadas, %d fallidas%n", pgCompletedWithoutPool, pgFailedWithoutPool);
+        System.out.printf(" PostgreSQL Con Pool:   %d completadas, %d fallidas%n", pgCompletedWithPool, pgFailedWithPool);
+        System.out.printf(" MySQL      Sin Pool:   %d completadas, %d fallidas%n", mysqlCompletedWithoutPool, mysqlFailedWithoutPool);
+        System.out.printf(" MySQL      Con Pool:   %d completadas, %d fallidas%n", mysqlCompletedWithPool, mysqlFailedWithPool);
     }
 }

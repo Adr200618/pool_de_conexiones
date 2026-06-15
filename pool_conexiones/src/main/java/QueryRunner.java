@@ -53,20 +53,15 @@ public class QueryRunner implements Callable<String> {
         try {
             long waitStart = System.nanoTime();
             conn = poolManager.getConn(5000);
-            long waitTime = (System.nanoTime() - waitStart) / 1_000_000;
-            
             String sql = provider.getSelectSQL(queryId);
             conn.query(sql);
-            
-            long endTime = System.nanoTime();
-            long duration = (endTime - startTime) / 1_000_000;
-            
+
             completedQueries.incrementAndGet();
-            return String.format("[%s - POOL] Query %d completada en %d ms (espera: %d ms)%n",
-                    provider.getName(), queryId, duration, waitTime);
+            return String.format("[%s - POOL] Query %d COMPLETADA%n",
+                    provider.getName(), queryId);
         } catch (InterruptedException | SQLException e) {
             failedQueries.incrementAndGet();
-            return String.format("[%s - POOL] Query %d falló: %s%n", 
+            return String.format("[%s - POOL] Query %d FALLÓ: %s%n",
                     provider.getName(), queryId, e.getMessage());
         } finally {
             if (conn != null) {
@@ -80,30 +75,41 @@ public class QueryRunner implements Callable<String> {
      */
     private String runWithoutPool() {
         RealConnection conn = null;
-        try {
-            long startConn = System.nanoTime();
-            conn = new RealConnection(-1, provider);
-            conn.connect();
-            long connTime = (System.nanoTime() - startConn) / 1_000_000;
-            
-            String sql = provider.getSelectSQL(queryId);
-            conn.query(sql);
-            
-            long endTime = System.nanoTime();
-            long duration = (endTime - startTime) / 1_000_000;
-            
-            completedQueries.incrementAndGet();
-            return String.format("[%s - NO POOL] Query %d completada en %d ms (conexión: %d ms)%n",
-                    provider.getName(), queryId, duration, connTime);
-        } catch (SQLException e) {
-            failedQueries.incrementAndGet();
-            return String.format("[%s - NO POOL] Query %d falló: %s%n", 
-                    provider.getName(), queryId, e.getMessage());
-        } finally {
-            if (conn != null) {
-                conn.close();
+        int retries = 2;
+        while (retries >= 0) {
+            try {
+                conn = new RealConnection(-1, provider);
+                conn.connect();
+
+                String sql = provider.getSelectSQL(queryId);
+                conn.query(sql);
+
+                completedQueries.incrementAndGet();
+                return String.format("[%s - NO POOL] Query %d COMPLETADA%n",
+                        provider.getName(), queryId);
+            } catch (SQLException e) {
+                if (retries == 0) {
+                    failedQueries.incrementAndGet();
+                    return String.format("[%s - NO POOL] Query %d FALLÓ: %s%n",
+                            provider.getName(), queryId, e.getMessage());
+                }
+                retries--;
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } finally {
+                if (conn != null) {
+                    conn.close();
+                    conn = null;
+                }
             }
         }
+        failedQueries.incrementAndGet();
+        return String.format("[%s - NO POOL] Query %d FALLÓ: reintentos agotados%n",
+                provider.getName(), queryId);
     }
     
     // Métodos estáticos para manejar los contadores
@@ -115,6 +121,11 @@ public class QueryRunner implements Callable<String> {
         return failedQueries.get(); 
     }
     
+    // Permite incrementar el contador de fallos desde fuera (por ejemplo ExecutionException)
+    public static void incrementFailedCount() {
+        failedQueries.incrementAndGet();
+    }
+
     public static void resetCounters() { 
         completedQueries.set(0); 
         failedQueries.set(0);

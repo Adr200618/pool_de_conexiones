@@ -74,7 +74,7 @@ if %errorlevel% equ 0 (
     echo Para ejecutar el programa, usa: run.bat
 ) else (
     echo.
-    echo ❌ ERROR EN LA COMPILACIÓN
+    echo ❌ ERROR EN LA COMPILACION
     echo Revisa los mensajes de error arriba
 )
 
