@@ -75,7 +75,8 @@ public class QueryRunner implements Callable<String> {
      */
     private String runWithoutPool() {
         RealConnection conn = null;
-        int retries = 2;
+        int retries = 3;
+        int delayMs = 150;
         while (retries >= 0) {
             try {
                 conn = new RealConnection(-1, provider);
@@ -95,11 +96,12 @@ public class QueryRunner implements Callable<String> {
                 }
                 retries--;
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(delayMs);
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                     break;
                 }
+                delayMs = Math.min(delayMs * 2, 1000);
             } finally {
                 if (conn != null) {
                     conn.close();

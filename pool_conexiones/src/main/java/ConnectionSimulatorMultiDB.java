@@ -12,8 +12,6 @@ public class ConnectionSimulatorMultiDB {
     // Configuración de la prueba
     private static final int NUM_QUERIES = 10000;
     private static final int NUM_THREADS = 10000;
-    private static final int NO_POOL_THREADS = 20; // Limita hilos sin pool para reducir la carga de creación de conexiones
-    private static final int MAX_THREAD_COUNT = 200; // Evita crear demasiados hilos cuando se usa pool
     private static final int POOL_INITIAL_SIZE = 10;
     private static final int POOL_MAX_SIZE = 30;
     
@@ -26,7 +24,7 @@ public class ConnectionSimulatorMultiDB {
     
     // Configuración MySQL (Windows)
     // Cambia estos valores según tu instalación
-    private static final String MYSQL_URL = "jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&connectTimeout=10&socketTimeout=30";
+    private static final String MYSQL_URL = "jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
     private static final String MYSQL_USER = "root";
     private static final String MYSQL_PASSWORD = "32082324"; // Cambia por tu contraseña real de MySQL
     
@@ -135,9 +133,8 @@ public class ConnectionSimulatorMultiDB {
      * Crea la tabla si no existe
      */
     private static void setupDatabase(DatabaseProvider provider) throws SQLException {
-        try (Connection conn = provider.createConnection();
-             var stmt = conn.createStatement()) {
-            stmt.execute(provider.getCreateTableSQL());
+        try (Connection conn = provider.createConnection()) {
+            conn.createStatement().execute(provider.getCreateTableSQL());
             System.out.println(" Tabla 'usuarios' verificada/creada en " + provider.getName());
         }
     }
@@ -146,35 +143,33 @@ public class ConnectionSimulatorMultiDB {
      * Inserta datos de prueba
      */
     private static void insertTestData(DatabaseProvider provider) throws SQLException {
-        try (Connection conn = provider.createConnection();
-             var countStmt = conn.createStatement()) {
+        try (Connection conn = provider.createConnection()) {
             // Verificar cuántos registros hay
-            try (ResultSet rs = countStmt.executeQuery("SELECT COUNT(*) FROM usuarios")) {
-                rs.next();
-                int count = rs.getInt(1);
-
-                if (count < NUM_QUERIES) {
-                    System.out.println(" Insertando " + NUM_QUERIES + " registros de prueba en " + provider.getName() + "...");
-
-                    // Usar batch para mejor rendimiento
-                    conn.setAutoCommit(false);
-                    try (var stmt = conn.createStatement()) {
-                        for (int i = 1; i <= NUM_QUERIES; i++) {
-                            String insertSQL = provider.getInsertSQL(i, "Usuario" + i, "usuario" + i + "@test.com");
-                            stmt.addBatch(insertSQL);
-
-                            // Ejecutar cada 1000 registros
-                            if (i % 1000 == 0) {
-                                stmt.executeBatch();
-                            }
+            ResultSet rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM usuarios");
+            rs.next();
+            int count = rs.getInt(1);
+            
+            if (count < NUM_QUERIES) {
+                System.out.println(" Insertando " + NUM_QUERIES + " registros de prueba en " + provider.getName() + "...");
+                
+                // Usar batch para mejor rendimiento
+                conn.setAutoCommit(false);
+                try (Statement stmt = conn.createStatement()) {
+                    for (int i = 1; i <= NUM_QUERIES; i++) {
+                        String insertSQL = provider.getInsertSQL(i, "Usuario" + i, "usuario" + i + "@test.com");
+                        stmt.addBatch(insertSQL);
+                        
+                        // Ejecutar cada 1000 registros
+                        if (i % 1000 == 0) {
+                            stmt.executeBatch();
                         }
-                        stmt.executeBatch();
-                        conn.commit();
                     }
-                    System.out.println(" Datos insertados en " + provider.getName());
-                } else {
-                    System.out.println(" Datos ya existentes en " + provider.getName());
+                    stmt.executeBatch();
+                    conn.commit();
                 }
+                System.out.println(" Datos insertados en " + provider.getName());
+            } else {
+                System.out.println(" Datos ya existentes en " + provider.getName());
             }
         }
     }
@@ -193,9 +188,7 @@ public class ConnectionSimulatorMultiDB {
             System.out.println("  Pool creado: " + POOL_INITIAL_SIZE + " conexiones iniciales");
         }
         
-        int threadCount = usePool ? Math.min(NUM_THREADS, MAX_THREAD_COUNT) : NO_POOL_THREADS;
-        System.out.println("  Ejecutando con " + threadCount + " hilos " + (usePool ? "(con pool)" : "(sin pool)"));
-        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS);
         List<Future<String>> futures = new ArrayList<>();
         long testStartTime = System.nanoTime();
         
@@ -240,9 +233,9 @@ public class ConnectionSimulatorMultiDB {
         
         return new TestResult(totalTime, completed, failed);
     }
-
+    
     /**
-     * Resultados de una ejecución de prueba
+     * Representa los resultados de una ejecución de prueba
      */
     private static class TestResult {
         private final long timeMs;
@@ -303,7 +296,7 @@ public class ConnectionSimulatorMultiDB {
         }
 
         System.out.println("\n╔══════════════════════════════════════════════════════════════╗");
-        System.out.println("║          RESUMEN FINAL DE QUERIES COMPLETADAS / FALLIDAS      ║");
+        System.out.println("║               RESUMEN FINAL DE QUERIES POR MODO              ║");
         System.out.println("╚══════════════════════════════════════════════════════════════╝");
         System.out.printf(" PostgreSQL Sin Pool:   %d completadas, %d fallidas%n", pgCompletedWithoutPool, pgFailedWithoutPool);
         System.out.printf(" PostgreSQL Con Pool:   %d completadas, %d fallidas%n", pgCompletedWithPool, pgFailedWithPool);
